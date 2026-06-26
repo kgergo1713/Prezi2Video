@@ -192,15 +192,20 @@ try {
   # (egy mintazat/textura kitoltest hagy ki, a tobbi tartalom jo marad) -> elnemitva,
   # mert csak zavarna a usert; a tenyleges sikert a exit code + kep-szam=0 ellenorzes donti el.
   $pdftoppmArgs = @("-png","-r",$Dpi,$Pdf,$slidePrefix)
-  $exitCode = Invoke-WithSpinner -Exe $Pdftoppm -CmdArgs $pdftoppmArgs
+  # pdftoppm szinkron, kozvetlen hivas (Start-Job nelkul): a Start-Job alfolyamat DLL-kereses
+  # kontextusa Windows-konfiguraciofuggoen megbizhatatlanna valt (exit 0xC0000135).
+  # Kozvetlen hivas mindig a helyes DLL-keresesi utat hasznalja.
+  Write-Host "   Feldolgozas folyamatban, ez eltarthat 1-2 percig..." -ForegroundColor DarkGray
+  $pdfOut = & $Pdftoppm @pdftoppmArgs 2>&1
+  $exitCode = $LASTEXITCODE
   if ($exitCode -ne 0) {
-    # Egy automatikus ujraprobalko: friss kicsomagolas utan az AV scanner rovidig zarolhatja az exe-t
-    # vagy a job-hataron at ritkan fellep atmeneti hiba; a masodik kiserlet tipikusan sikerul.
-    Write-Host "   Elso kiserlet sikertelen (exit $exitCode), ujraprobal..." -ForegroundColor Yellow
-    Start-Sleep -Milliseconds 2000
-    Get-ChildItem -Path $Work -Filter "slide-*.png" -ErrorAction SilentlyContinue | Remove-Item -Force
-    $exitCode = Invoke-WithSpinner -Exe $Pdftoppm -CmdArgs $pdftoppmArgs
-    if ($exitCode -ne 0) { Write-Err "pdftoppm hiba (exit $exitCode)"; exit 1 }
+    $realErrors = @($pdfOut | Where-Object { $_ -notmatch "Singular matrix in tiling pattern fill" })
+    if ($realErrors.Count -gt 0) {
+      Write-Host "--- pdftoppm kimenet ---" -ForegroundColor DarkYellow
+      $realErrors | ForEach-Object { Write-Host "$_" }
+      Write-Host "--- vege ---" -ForegroundColor DarkYellow
+    }
+    Write-Err "pdftoppm hiba (exit $exitCode)"; exit 1
   }
 
   $pngs = Get-ChildItem -Path $Work -Filter "slide-*.png" | Sort-Object Name
