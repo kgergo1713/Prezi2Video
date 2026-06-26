@@ -1,5 +1,6 @@
 <#
-  masodszor.ps1 — PDF -> Samsung TV-safe looping MP4 (USB lejatszas), Windows, telepites nelkul.
+  _slides2tv.ps1 — PDF -> Samsung TV-safe looping MP4 (USB lejatszas), Windows, telepites nelkul.
+  Belso script: kozvetlenul ne inditsd, a konverter.bat hivja meg.
 
   Alapertelmezesben a sajat mappajabol a "V1_Master_Template.pptx.pdf" fajlt keresi
   (ezt varjuk, hogy nem valtozik). Ha nem talalja, megkerdezi a fajlnevet.
