@@ -41,12 +41,15 @@ function Write-Err($msg)  { Write-Host "HIBA: $msg" -ForegroundColor Red }
 # Visszaadja az exit code-ot ES a natic exe teljes kimenetet (stdout+stderr egyutt).
 # A kimenetet csak hiba eseten irjuk ki a kepernyore (sikeres futasnal csak zajt jelentene).
 function Invoke-WithSpinner {
-  param([string]$Exe, [string[]]$Args)
+  param([string]$Exe, [string[]]$CmdArgs)
+  # $Args PowerShell automatic variable -> $using:Args a jobban az auto-var-t kapna el, nem a paramtert.
+  # Ezert explicit, nem-foglalt nevu valtozokba mentjuk a job elott.
+  $jobExe  = $Exe
+  $jobArgs = [string[]]$CmdArgs
   $job = Start-Job -ScriptBlock {
-    param($e, $a)
-    $out = & $e @a 2>&1 | Out-String
+    $out = & $using:jobExe @using:jobArgs 2>&1 | Out-String
     [PSCustomObject]@{ Code = $LASTEXITCODE; Output = $out }
-  } -ArgumentList $Exe, $Args
+  }
 
   $spinner = @('|','/','-','\')
   $si = 0
@@ -188,14 +191,14 @@ try {
   # (egy mintazat/textura kitoltest hagy ki, a tobbi tartalom jo marad) -> elnemitva,
   # mert csak zavarna a usert; a tenyleges sikert a exit code + kep-szam=0 ellenorzes donti el.
   $pdftoppmArgs = @("-png","-r",$Dpi,$Pdf,$slidePrefix)
-  $exitCode = Invoke-WithSpinner -Exe $Pdftoppm -Args $pdftoppmArgs
+  $exitCode = Invoke-WithSpinner -Exe $Pdftoppm -CmdArgs $pdftoppmArgs
   if ($exitCode -ne 0) {
     # Egy automatikus ujraprobalko: friss kicsomagolas utan az AV scanner rovidig zarolhatja az exe-t
     # vagy a job-hataron at ritkan fellep atmeneti hiba; a masodik kiserlet tipikusan sikerul.
     Write-Host "   Elso kiserlet sikertelen (exit $exitCode), ujraprobal..." -ForegroundColor Yellow
     Start-Sleep -Milliseconds 2000
     Get-ChildItem -Path $Work -Filter "slide-*.png" -ErrorAction SilentlyContinue | Remove-Item -Force
-    $exitCode = Invoke-WithSpinner -Exe $Pdftoppm -Args $pdftoppmArgs
+    $exitCode = Invoke-WithSpinner -Exe $Pdftoppm -CmdArgs $pdftoppmArgs
     if ($exitCode -ne 0) { Write-Err "pdftoppm hiba (exit $exitCode)"; exit 1 }
   }
 
@@ -229,7 +232,7 @@ try {
   $encArgs = @("-y","-loglevel","error","-framerate","1/$SecPerSlide","-i",$numericPattern,
                "-vf",$vf,"-c:v","libx264","-profile:v","high","-level","4.0","-preset","medium",
                "-crf","23","-r",$Fps,"-pix_fmt","yuv420p",$base)
-  $exitCode = Invoke-WithSpinner -Exe $Ffmpeg -Args $encArgs
+  $exitCode = Invoke-WithSpinner -Exe $Ffmpeg -CmdArgs $encArgs
   if ($exitCode -ne 0) { Write-Err "ffmpeg enkodolasi hiba (exit $exitCode)"; exit 1 }
 
   # base.mp4 hossza pontosan: dia-szam * SecPerSlide (determinisztikus, nincs kerekitesi hiba)
@@ -245,7 +248,7 @@ try {
     $loops = [Math]::Max(0, $plays - 1)
     Write-Step "loop bele-sutese: $Hours ora ($plays x ismetles)"
     $loopArgs = @("-y","-loglevel","error","-stream_loop",$loops,"-i",$base,"-c","copy",$OutFile)
-    $exitCode = Invoke-WithSpinner -Exe $Ffmpeg -Args $loopArgs
+    $exitCode = Invoke-WithSpinner -Exe $Ffmpeg -CmdArgs $loopArgs
     if ($exitCode -ne 0) { Write-Err "ffmpeg loop-bake hiba (exit $exitCode)"; exit 1 }
   }
 
