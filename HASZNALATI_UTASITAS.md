@@ -16,7 +16,7 @@ Ez a program egy Google Slides prezentaciobol automatikusan keszit egy TV-re alk
 
 1. Nyisd meg a prezentaciot **Google Slides**-ban.
 2. Kattints a menuben: **Fajl → Letoltes → PDF dokumentum (.pdf)**
-3. A letoltott fajlt helyezd ugyanabba a mappaba, ahol a `konverter.bat` talalhato.
+3. A letoltott fajlt helyezd ugyanabba a mappaba, ahol a `konverter.bat` talalhato. (Alapértelmezésben ez a Letöltések / Downloads mappába kerül, maradhat ott is!)
 
 > A program automatikusan megkeresi a `V1_Master_Template.pptx.pdf` nevu fajlt.
 > Ha mas neven mentetted el a PDF-et, huzd ra egyszeruen a `konverter.bat` ikonra.
@@ -25,14 +25,16 @@ Ez a program egy Google Slides prezentaciobol automatikusan keszit egy TV-re alk
 
 ## 2. lepes: Konvertales inditasa
 
-Kattints duplat a **`konverter.bat`** fajlra.
+1. Nyisd meg a **Windows Intezot** (a taskbaron a sarga mappaikon, vagy: **Windows + E**).
+2. Navigalj a **Letoltesek** mappaba (bal oldalt a gyorseleres listaban megtalalhato).
+3. Kattints duplat a **`konverter.bat`** fajlra.
 
 Megnyilik egy fekete ablak, amely vegigkoveti a folyamatot:
 
 - Elso futasnal letolti a szukseges programokat (egyszer, utana nem kell internet).
 - A PDF-bol kepeket keszit.
-- A kepekbol osszeallitja a videot (nagy prezentacionalnal ez toebb percet is igenybe vehet).
-- Elkeszul a **`*_tv.mp4`** fajl ugyanabban a mappaban, ahol a PDF van.
+- A kepekbol osszeallitja a videot (nagy prezentacionalnal ez tobb percet is igenybe vehet).
+- Elkeszul a **`*_tv.mp4`** fajl a Letoltesek mappaban.
 
 Az ablak vegul bezarul. Ha piros hibauzenetet latsz, keresz meg minket (elerhetseg lent).
 
