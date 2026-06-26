@@ -38,13 +38,14 @@ function Write-Step($msg) { Write-Host ">> $msg" -ForegroundColor Cyan }
 function Write-Err($msg)  { Write-Host "HIBA: $msg" -ForegroundColor Red }
 
 # Hatterben futtat egy natic exe-t, kozben pörgő jelet ir ki, hogy a user lassa: dolgozik, nem fagyott le.
-# Visszaadja az exit code-ot. A natic exe sajat stdout/stderr-jet csendben tartja (csak a vegeredmeny szamit).
+# Visszaadja az exit code-ot ES a natic exe teljes kimenetet (stdout+stderr egyutt).
+# A kimenetet csak hiba eseten irjuk ki a kepernyore (sikeres futasnal csak zajt jelentene).
 function Invoke-WithSpinner {
   param([string]$Exe, [string[]]$Args)
   $job = Start-Job -ScriptBlock {
     param($e, $a)
-    & $e @a *>$null
-    $LASTEXITCODE
+    $out = & $e @a 2>&1 | Out-String
+    [PSCustomObject]@{ Code = $LASTEXITCODE; Output = $out }
   } -ArgumentList $Exe, $Args
 
   $spinner = @('|','/','-','\')
@@ -55,9 +56,14 @@ function Invoke-WithSpinner {
     Start-Sleep -Milliseconds 400
   }
   Write-Host "`r   kesz.                "
-  $code = Receive-Job -Job $job -Wait
+  $result = Receive-Job -Job $job -Wait
   Remove-Job -Job $job
-  return $code
+  if ($result.Code -ne 0 -and $result.Output) {
+    Write-Host "--- a program reszletes kimenete (hibakereseshez) ---" -ForegroundColor DarkYellow
+    Write-Host $result.Output
+    Write-Host "--- kimenet vege ---" -ForegroundColor DarkYellow
+  }
+  return $result.Code
 }
 
 # --- 0) Bemenet bekerese ---
@@ -125,8 +131,12 @@ function Ensure-Ffmpeg {
 }
 
 function Ensure-Pdftoppm {
-  $exe = Join-Path $BinDir "poppler\Library\bin\pdftoppm.exe"
-  if (Test-Path $exe) { return $exe }
+  # Dinamikus kereses: a zip belso mappanevtol fuggetlenul megtalaljuk (pl. Release-26.02.0-0\Library\bin\)
+  $popplerDir = Join-Path $BinDir "poppler"
+  if (Test-Path $popplerDir) {
+    $cached = Get-ChildItem -Path $popplerDir -Recurse -Filter "pdftoppm.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cached) { return $cached.FullName }
+  }
 
   $sys = Get-Command pdftoppm.exe -ErrorAction SilentlyContinue
   if ($sys) { Write-Step "pdftoppm mar telepitve a rendszeren, azt hasznalom"; return $sys.Source }
@@ -172,12 +182,22 @@ try {
 
   # --- 3) PDF -> PNG ---
   Write-Step "pdf -> png @ $Dpi DPI (nagy/sok-kepes PDF-nel ez eltarthat egy percig)"
+  Write-Host "   PDF: $Pdf" -ForegroundColor DarkGray
   $slidePrefix = Join-Path $Work "slide"
   # a poppler "Singular matrix in tiling pattern fill" tipusu uzenetei artalmatlanok
   # (egy mintazat/textura kitoltest hagy ki, a tobbi tartalom jo marad) -> elnemitva,
   # mert csak zavarna a usert; a tenyleges sikert a exit code + kep-szam=0 ellenorzes donti el.
-  $exitCode = Invoke-WithSpinner -Exe $Pdftoppm -Args @("-png","-r",$Dpi,$Pdf,$slidePrefix)
-  if ($exitCode -ne 0) { Write-Err "pdftoppm hiba (exit $exitCode)"; exit 1 }
+  $pdftoppmArgs = @("-png","-r",$Dpi,$Pdf,$slidePrefix)
+  $exitCode = Invoke-WithSpinner -Exe $Pdftoppm -Args $pdftoppmArgs
+  if ($exitCode -ne 0) {
+    # Egy automatikus ujraprobalko: friss kicsomagolas utan az AV scanner rovidig zarolhatja az exe-t
+    # vagy a job-hataron at ritkan fellep atmeneti hiba; a masodik kiserlet tipikusan sikerul.
+    Write-Host "   Elso kiserlet sikertelen (exit $exitCode), ujraprobal..." -ForegroundColor Yellow
+    Start-Sleep -Milliseconds 2000
+    Get-ChildItem -Path $Work -Filter "slide-*.png" -ErrorAction SilentlyContinue | Remove-Item -Force
+    $exitCode = Invoke-WithSpinner -Exe $Pdftoppm -Args $pdftoppmArgs
+    if ($exitCode -ne 0) { Write-Err "pdftoppm hiba (exit $exitCode)"; exit 1 }
+  }
 
   $pngs = Get-ChildItem -Path $Work -Filter "slide-*.png" | Sort-Object Name
   if ($pngs.Count -eq 0) { Write-Err "nem keletkezett dia-kep, ellenorizd a PDF-et"; exit 1 }
