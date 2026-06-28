@@ -12,11 +12,6 @@
     3) A loop-hosszt bele-suti a fajlba (stream-copy ismetles), hogy a kirakatban
        senkinek ne kelljen a TV "Repeat" menujet keresnie.
 
-  Hasznalat (dupla-kattintas: eloszor.bat, vagy PowerShell-bol):
-    .\masodszor.ps1                          # a megszokott fajlnevet keresi automatikusan
-    .\masodszor.ps1 -Pdf "deck.pdf"
-    .\masodszor.ps1 -Pdf "deck.pdf" -SecPerSlide 12 -Hours 8
-    .\masodszor.ps1 -Pdf "deck.pdf" -Rotate cw      # ALLO dia -> fuggoleges TV
 #>
 
 param(
@@ -167,6 +162,34 @@ function Ensure-Pdftoppm {
 
   $found = Get-ChildItem -Path $extractDir -Recurse -Filter "pdftoppm.exe" | Select-Object -First 1
   if (-not $found) { Write-Err "a kicsomagolt poppler-ben nincs pdftoppm.exe (csomag-szerkezet valtozott?)"; exit 1 }
+
+  # App-local MSVC runtime: a poppler zip nem tartalmaz vcruntime140*.dll / msvcp140.dll -t.
+  # Ha ezek hianyzanak a poppler \bin\ mellol, az exe 0xC0000135 hibával indul el.
+  # Masolunk System32-bol (engedett: MS Redistributable license), ha ott vannak.
+  # Ha System32-ben sincs (teljesen friss Windows, sosem telepitett VC++ app),
+  # letoltjuk a Microsoft VC++ 2015-2022 Redistributable-t.
+  $popplerBin = Split-Path $found.FullName
+  $runtimeDlls = @("vcruntime140.dll","vcruntime140_1.dll","msvcp140.dll","msvcp140_1.dll")
+  $missingFromSys = @()
+  foreach ($dll in $runtimeDlls) {
+    if (Test-Path (Join-Path $popplerBin $dll)) { continue }
+    $sys = Join-Path $env:SystemRoot "System32\$dll"
+    if (Test-Path $sys) { Copy-Item $sys $popplerBin -Force }
+    else                { $missingFromSys += $dll }
+  }
+  if ($missingFromSys.Count -gt 0) {
+    Write-Step "Visual C++ futtatokornyzet letoltese (vcredist, ~25 MB) - egyszeri, admin jog kell"
+    $vcExe = Join-Path $BinDir "vcredist.exe"
+    Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $vcExe `
+      -Headers @{ "User-Agent" = "slides2tv" }
+    Start-Process $vcExe -ArgumentList "/install /quiet /norestart" -Wait
+    Remove-Item $vcExe -Force -ErrorAction SilentlyContinue
+    foreach ($dll in $missingFromSys) {
+      $sys = Join-Path $env:SystemRoot "System32\$dll"
+      if (Test-Path $sys) { Copy-Item $sys $popplerBin -Force }
+    }
+  }
+
   Write-Step "poppler keszen all: $($found.FullName)"
   return $found.FullName
 }
@@ -185,19 +208,35 @@ try {
   $W,$H = $Resolution -split "x"
 
   # --- 3) PDF -> PNG ---
-  Write-Step "pdf -> png @ $Dpi DPI (nagy/sok-kepes PDF-nel ez eltarthat egy percig)"
+  Write-Step "pdf -> png @ $Dpi DPI (nagy/sok-kepes PDF-nel ez eltarthat tobb percig is!)"
   Write-Host "   PDF: $Pdf" -ForegroundColor DarkGray
   $slidePrefix = Join-Path $Work "slide"
   # a poppler "Singular matrix in tiling pattern fill" tipusu uzenetei artalmatlanok
   # (egy mintazat/textura kitoltest hagy ki, a tobbi tartalom jo marad) -> elnemitva,
   # mert csak zavarna a usert; a tenyleges sikert a exit code + kep-szam=0 ellenorzes donti el.
   $pdftoppmArgs = @("-png","-r",$Dpi,$Pdf,$slidePrefix)
-  # pdftoppm szinkron, kozvetlen hivas (Start-Job nelkul): a Start-Job alfolyamat DLL-kereses
-  # kontextusa Windows-konfiguraciofuggoen megbizhatatlanna valt (exit 0xC0000135).
-  # Kozvetlen hivas mindig a helyes DLL-keresesi utat hasznalja.
-  Write-Host "   Feldolgozas folyamatban, ez eltarthat 1-2 percig..." -ForegroundColor DarkGray
-  $pdfOut = & $Pdftoppm @pdftoppmArgs 2>&1
-  $exitCode = $LASTEXITCODE
+  # Start-Process -PassThru: nem Start-Job (Start-Job subprocess DLL-kontextusa megbizhatatlanna valt,
+  # exit 0xC0000135). Start-Process kozvetlenul inditja az exe-t (app-local DLL-ek megtalalhatok),
+  # -PassThru visszaadja a process objektumot, igy spinner futtathat a varakkozas alatt.
+  $tmpErr = [System.IO.Path]::GetTempFileName()
+  $argStr = ($pdftoppmArgs | ForEach-Object {
+    $s = [string]$_
+    if ($s -match ' ') { '"' + $s + '"' } else { $s }
+  }) -join ' '
+  $proc = Start-Process -FilePath $Pdftoppm -ArgumentList $argStr `
+    -RedirectStandardError $tmpErr -NoNewWindow -PassThru
+  $spinner = @('|','/','-','\')
+  $si = 0
+  while (-not $proc.HasExited) {
+    Write-Host -NoNewline ("`r   Feldolgozas... " + $spinner[$si % 4])
+    $si++
+    Start-Sleep -Milliseconds 400
+  }
+  $proc.WaitForExit()
+  Write-Host "`r                              "
+  $exitCode = $proc.ExitCode
+  $pdfOut = if (Test-Path $tmpErr) { Get-Content $tmpErr -ErrorAction SilentlyContinue } else { @() }
+  Remove-Item $tmpErr -Force -ErrorAction SilentlyContinue
   if ($exitCode -ne 0) {
     $realErrors = @($pdfOut | Where-Object { $_ -notmatch "Singular matrix in tiling pattern fill" })
     if ($realErrors.Count -gt 0) {
