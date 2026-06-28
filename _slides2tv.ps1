@@ -215,16 +215,22 @@ try {
   # (egy mintazat/textura kitoltest hagy ki, a tobbi tartalom jo marad) -> elnemitva,
   # mert csak zavarna a usert; a tenyleges sikert a exit code + kep-szam=0 ellenorzes donti el.
   $pdftoppmArgs = @("-png","-r",$Dpi,$Pdf,$slidePrefix)
-  # Start-Process -PassThru: nem Start-Job (Start-Job subprocess DLL-kontextusa megbizhatatlanna valt,
-  # exit 0xC0000135). Start-Process kozvetlenul inditja az exe-t (app-local DLL-ek megtalalhatok),
-  # -PassThru visszaadja a process objektumot, igy spinner futtathat a varakkozas alatt.
-  $tmpErr = [System.IO.Path]::GetTempFileName()
+  # System.Diagnostics.Process kozvetlenul: Start-Process -PassThru PS5.1-ben null ExitCode-ot adhat
+  # vissza, ami ($null -ne 0) = TRUE, tehat hamis hibat triggerel. Process.Start() + WaitForExit()
+  # garantaltan helyes ExitCode-ot ad. ReadToEndAsync(): aszinkron stderr-olvasas megelozi a
+  # buffer-feltolodest (sok "Singular matrix" sor) ami kulonben deadlock-ot okozna.
   $argStr = ($pdftoppmArgs | ForEach-Object {
     $s = [string]$_
     if ($s -match ' ') { '"' + $s + '"' } else { $s }
   }) -join ' '
-  $proc = Start-Process -FilePath $Pdftoppm -ArgumentList $argStr `
-    -RedirectStandardError $tmpErr -NoNewWindow -PassThru
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName        = $Pdftoppm
+  $psi.Arguments       = $argStr
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardError = $true
+  $psi.CreateNoWindow  = $true
+  $proc        = [System.Diagnostics.Process]::Start($psi)
+  $stderrAsync = $proc.StandardError.ReadToEndAsync()
   $spinner = @('|','/','-','\')
   $si = 0
   while (-not $proc.HasExited) {
@@ -234,9 +240,9 @@ try {
   }
   $proc.WaitForExit()
   Write-Host "`r                              "
-  $exitCode = $proc.ExitCode
-  $pdfOut = if (Test-Path $tmpErr) { Get-Content $tmpErr -ErrorAction SilentlyContinue } else { @() }
-  Remove-Item $tmpErr -Force -ErrorAction SilentlyContinue
+  $exitCode   = $proc.ExitCode
+  $stderrText = $stderrAsync.GetAwaiter().GetResult()
+  $pdfOut     = if ($stderrText) { $stderrText -split "`r?`n" | Where-Object { $_ } } else { @() }
   if ($exitCode -ne 0) {
     $realErrors = @($pdfOut | Where-Object { $_ -notmatch "Singular matrix in tiling pattern fill" })
     if ($realErrors.Count -gt 0) {
